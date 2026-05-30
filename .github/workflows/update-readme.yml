@@ -19,13 +19,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Update README branch section
+      - name: Ensure README section markers
         shell: bash
-        env:
-          BRANCH: ${{ github.ref_name }}
-          TIMESTAMP: ${{ github.event.head_commit.timestamp }}
-          ACTOR: ${{ github.actor }}
-          SHA: ${{ github.sha }}
         run: |
           set -e
 
@@ -38,37 +33,43 @@ jobs:
               >> README.md
           fi
 
-          python3 - << 'PYEOF'
-import re, os, sys
+      - name: Update README branch section
+        shell: python
+        env:
+          BRANCH: ${{ github.ref_name }}
+          TIMESTAMP: ${{ github.event.head_commit.timestamp }}
+          ACTOR: ${{ github.actor }}
+          SHA: ${{ github.sha }}
+        run: |
+          import re, os, sys
 
-branch    = os.environ['BRANCH']
-timestamp = os.environ['TIMESTAMP']
-actor     = os.environ['ACTOR']
-short_sha = os.environ['SHA'][:7]
+          branch    = os.environ['BRANCH']
+          timestamp = os.environ['TIMESTAMP']
+          actor     = os.environ['ACTOR']
+          short_sha = os.environ['SHA'][:7]
 
-new_line = f"- `{branch}`: {timestamp} by {actor} on commit {short_sha}"
+          new_line = f"- `{branch}`: {timestamp} by {actor} on commit {short_sha}"
 
-with open('README.md') as f:
-    content = f.read()
+          with open('README.md') as f:
+              content = f.read()
 
-m = re.search(
-    r'(<!-- BRANCH-AUTO-UPDATE-START -->)(.*?)(<!-- BRANCH-AUTO-UPDATE-END -->)',
-    content, re.DOTALL,
-)
-if not m:
-    sys.exit('ERROR: section markers not found in README.md')
+          m = re.search(
+              r'(<!-- BRANCH-AUTO-UPDATE-START -->)(.*?)(<!-- BRANCH-AUTO-UPDATE-END -->)',
+              content, re.DOTALL,
+          )
+          if not m:
+              sys.exit('ERROR: section markers not found in README.md')
 
-inner = m.group(2).strip()
-lines = [l for l in inner.splitlines() if l.strip() and not l.startswith(f'- `{branch}`:')]
-lines.append(new_line)
-lines.sort()
+          inner = m.group(2).strip()
+          lines = [l for l in inner.splitlines() if l.strip() and not l.startswith(f'- `{branch}`:')]
+          lines.append(new_line)
+          lines.sort()
 
-replacement = m.group(1) + '\n' + '\n'.join(lines) + '\n' + m.group(3)
-with open('README.md', 'w') as f:
-    f.write(content[:m.start()] + replacement + content[m.end():])
+          replacement = m.group(1) + '\n' + '\n'.join(lines) + '\n' + m.group(3)
+          with open('README.md', 'w') as f:
+              f.write(content[:m.start()] + replacement + content[m.end():])
 
-print(f'README updated for branch: {branch}')
-PYEOF
+          print(f'README updated for branch: {branch}')
 
       - name: Commit and push with retry
         run: |
