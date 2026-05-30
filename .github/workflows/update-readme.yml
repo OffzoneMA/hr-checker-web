@@ -1,0 +1,101 @@
+name: Update README branch log
+
+on:
+  push:
+    branches:
+      - '**'
+
+permissions:
+  contents: write
+
+jobs:
+  update-readme:
+    runs-on: ubuntu-latest
+    if: github.actor != 'github-actions[bot]'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Update README branch section
+        shell: bash
+        env:
+          BRANCH: ${{ github.ref_name }}
+          TIMESTAMP: ${{ github.event.head_commit.timestamp }}
+          ACTOR: ${{ github.actor }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -e
+
+          # Ensure README.md exists with section markers
+          if [ ! -f README.md ]; then
+            printf "# %s\n\n## Branch Last Auto Updates\n\n<!-- BRANCH-AUTO-UPDATE-START -->\n<!-- BRANCH-AUTO-UPDATE-END -->\n" \
+              "$(basename "$PWD")" > README.md
+          elif ! grep -q "<!-- BRANCH-AUTO-UPDATE-START -->" README.md; then
+            printf "\n## Branch Last Auto Updates\n\n<!-- BRANCH-AUTO-UPDATE-START -->\n<!-- BRANCH-AUTO-UPDATE-END -->\n" \
+              >> README.md
+          fi
+
+          python3 - << 'PYEOF'
+import re, os, sys
+
+branch    = os.environ['BRANCH']
+timestamp = os.environ['TIMESTAMP']
+actor     = os.environ['ACTOR']
+short_sha = os.environ['SHA'][:7]
+
+new_line = f"- `{branch}`: {timestamp} by {actor} on commit {short_sha}"
+
+with open('README.md') as f:
+    content = f.read()
+
+m = re.search(
+    r'(<!-- BRANCH-AUTO-UPDATE-START -->)(.*?)(<!-- BRANCH-AUTO-UPDATE-END -->)',
+    content, re.DOTALL,
+)
+if not m:
+    sys.exit('ERROR: section markers not found in README.md')
+
+inner = m.group(2).strip()
+lines = [l for l in inner.splitlines() if l.strip() and not l.startswith(f'- `{branch}`:')]
+lines.append(new_line)
+lines.sort()
+
+replacement = m.group(1) + '\n' + '\n'.join(lines) + '\n' + m.group(3)
+with open('README.md', 'w') as f:
+    f.write(content[:m.start()] + replacement + content[m.end():])
+
+print(f'README updated for branch: {branch}')
+PYEOF
+
+      - name: Commit and push with retry
+        run: |
+          set +e
+          BRANCH="${{ github.ref_name }}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add README.md
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+
+          git commit -m "chore: update README branch log [skip ci]"
+
+          MAX_RETRIES=3
+          RETRY=0
+          while [ $RETRY -lt $MAX_RETRIES ]; do
+            git pull --rebase --autostash origin "$BRANCH" && \
+            git push origin HEAD:"$BRANCH" && break
+            RETRY=$((RETRY + 1))
+            echo "Push failed, retrying ($RETRY/$MAX_RETRIES)..."
+            sleep 5
+          done
+          if [ $RETRY -eq $MAX_RETRIES ]; then
+            echo "Failed to push after $MAX_RETRIES attempts"
+            exit 1
+          fi
